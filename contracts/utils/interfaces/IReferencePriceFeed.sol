@@ -3,6 +3,6 @@
 pragma solidity 0.8.22;
 
 interface IReferencePriceFeed {
-    function getPrice(bytes20 _priceFeedOrSymbol) external view returns (uint256);
-    function setPriceFeedStalePeriod(bytes20 _priceFeedOrSymbol, uint256 _stalePeriod) external;
+    function getPrice(bytes21 _feedId) external view returns (uint256);
+    function setPriceFeedStalePeriod(bytes21 _feedId, uint256 _stalePeriod) external;
 }

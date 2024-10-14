@@ -7,26 +7,24 @@ interface IStore {
     // Structs
     struct Asset {
         uint8 decimals;  
-        uint88 minSize;  // minimum position size
-        bytes20 referencePriceFeed;  //address or token symbol
+        uint80 minSize;  // minimum position size
+        bytes21 priceFeedId;  //feed id for reference price
     }
 
     struct Market {
         bytes32 name; // Market's full name, e.g. Bitcoin / U.S. Dollar
         bytes12 category; // crypto, fx, commodities, or indices
-        bytes20 referencePriceFeed; // Reference Price feed contract address or token symbol
-        bytes32 pythFeed; // Pyth price feed id
+        bool hasReferencePrice; // Reference Price feed boolean
         uint16 maxLeverage; // No decimals
         uint16 maxDeviation; // In bps, max price difference from oracle to referencePrice
         uint16 fee; // In bps. 10 = 0.1%
         uint16 liqThreshold; // In bps
         uint16 fundingFactor; // Yearly funding rate if OI is completely skewed to one side. In bps.
         uint8 minOrderAge; // Min order age before is can be executed. In seconds
-        uint8 pythMaxAge; // Max Pyth submitted price age, in seconds
+        uint8 priceMaxAge; // Max price age, in seconds
         bool isReduceOnly; // accepts only reduce only orders
-        uint16 priceConfidenceThresholds;  // in bps. if threshold is higher than pyth price confidence, pyth price is used
-        uint16 priceConfidenceMultipliers; // in bps. if threshold is lower than pyth price confidence, pyth price confidence multiplied by multiplier and add or remove pyth price according to min max price
-        // e.g pyth price = 1000, pyth confidence = 2 (0.2%), threshold = 10 (0.1%), multiplier= 20000 (200%) => max price = 1000 + (2*2) = 1004, min price = 1000 - (2*2) = 996
+        uint16 priceSpread;  // market's price spread in bps.
+        bytes21 priceFeedId; // FTSOv2 price feed id
     }
 
 

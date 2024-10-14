@@ -12,6 +12,8 @@ import './utils/interfaces/IStore.sol';
 import './utils/TradingValidator.sol';
 import './PositionManager.sol';
 import './interfaces/IReferralStorage.sol';
+import './utils/FTSOv2.sol';
+import './Executor.sol';
 
 import './utils/Governable.sol';
 
@@ -69,6 +71,7 @@ contract OrderBook is Governable {
 
     bool public areNewOrdersPaused;
     bool public isProcessingPaused;
+    bool public isSelfExecutionActive;
 
     bytes32 public ethSignedMessageHash;  // Message Hash equivalent of UI  sign message of enable orders, remix.ethereum.org can be used for message hash
 
@@ -105,9 +108,10 @@ contract OrderBook is Governable {
     event MaxMarketOrderTTLUpdated(uint256 maxMarketOrderTTL);
     event MaxTriggerOrderTTLUpdated(uint256 maxTriggerOrderTTL);
     event OrderExecutionFeeUpdated(uint64 orderExecutionFee);
-    event Link(address store, address tradingValidator, address referralStorage, address executor, address positionManager);
+    event Link(address store, address tradingValidator, address referralStorage, address executor, address positionManager, address ftsoV2);
     event NewOrdersPaused(bool orderPaused);
     event ProcessingPaused(bool processingPaused);
+    event SelfExecutionActive(bool isSelfExecutionActive);
 
     event AddOrder(uint32 indexed orderId, uint8 orderType);
     event RemoveOrder(uint32 indexed orderId, uint8 orderType);
@@ -118,8 +122,9 @@ contract OrderBook is Governable {
     PositionManager public positionManager;
     TradingValidator public tradingValidator;
     IReferralStorage public referralStorage;
+    FTSOv2 public ftsoV2;
 
-    address public executorAddress;
+    Executor public executor;
 
     /// @dev Reverts if order processing is paused
     modifier ifNotPaused() {
@@ -129,7 +134,7 @@ contract OrderBook is Governable {
 
     /// @dev Only callable by Executor contract
     modifier onlyExecutor() {
-        require(msg.sender == executorAddress, "!unauthorized");
+        require(msg.sender == address(executor), "!unauthorized");
         _;
     }
 
@@ -173,6 +178,13 @@ contract OrderBook is Governable {
     function setIsProcessingPaused(bool _isProcessingPaused) external onlyGov {
         isProcessingPaused = _isProcessingPaused;
         emit ProcessingPaused(isProcessingPaused);
+    }
+
+    /// @notice Enable/Disable self execution new orders
+    /// @dev Only callable by governance
+    function setIsSelfExecutionActive(bool _isSelfExecutionActive) external onlyGov {
+        isSelfExecutionActive = _isSelfExecutionActive;
+        emit SelfExecutionActive(isSelfExecutionActive);
     }
 
     /// @notice Set duration until market orders expire
@@ -223,14 +235,16 @@ contract OrderBook is Governable {
         store = Store(payable(addressStorage.getAddress('Store')));
         tradingValidator = TradingValidator(addressStorage.getAddress('TradingValidator'));
         referralStorage = IReferralStorage(addressStorage.getAddress('ReferralStorage'));
-        executorAddress = addressStorage.getAddress('Executor');
+        executor = Executor(addressStorage.getAddress('Executor'));
         positionManager = PositionManager(addressStorage.getAddress('PositionManager'));
+        ftsoV2 = FTSOv2(addressStorage.getAddress('FTSOv2'));
         emit Link(
             address(store),
             address(tradingValidator),
             address(referralStorage),
-            executorAddress,
-            address(positionManager)
+            address(executor),
+            address(positionManager),
+            address(ftsoV2)
         );
     }
 
@@ -311,7 +325,8 @@ contract OrderBook is Governable {
 
         // Submit order
         uint256 valueConsumed;
-        (, valueConsumed) = _submitOrder(_params);
+        uint32 orderId;
+        (orderId, valueConsumed) = _submitOrder(_params);
 
         if (_referralCode != bytes32(0) && address(referralStorage) != address(0)) {
             referralStorage.setTraderReferralCode(_params.user, _referralCode);
@@ -383,8 +398,22 @@ contract OrderBook is Governable {
                 _updateCancelOrderId(slOrderId, tpOrderId);
             }
         }
+        uint256 priceFeedFee;
+        if(isSelfExecutionActive){
+            IStore.Market memory market = store.getMarket(_params.market);
+            if(market.minOrderAge == 0 && _params.orderDetail.orderType == 0){
+                priceFeedFee = ftsoV2.getFee(market.priceFeedId);
+                uint32[] memory orderIds = new uint32[](1);
+                bytes21[] memory priceFeedIds = new bytes21[](1);
+                orderIds[0] = orderId;
+                priceFeedIds[0] = market.priceFeedId;
+                uint256 remainingMsgValue = executor.executeOrders{value:priceFeedFee}(orderIds,priceFeedIds,_params.user);
+                priceFeedFee -= remainingMsgValue;
+            }
+            
+        }
 
-        uint256 requiredValue = (_params.asset == address(0) ? valueConsumed : 0) + totalExecutionFee;
+        uint256 requiredValue = (_params.asset == address(0) ? valueConsumed : 0) + totalExecutionFee + priceFeedFee;
         require(msg.value >= requiredValue,"!msg-value");
         uint256 diff = msg.value - requiredValue;
         if (diff > 0) {

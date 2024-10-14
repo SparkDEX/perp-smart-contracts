@@ -167,6 +167,9 @@ contract Timelock is ITimelock {
     function setAreNewOrdersPaused(address _target, bool b) external onlyAdmin {
         IOrderBook(_target).setAreNewOrdersPaused(b);
     }
+    function setIsSelfExecutionActive(address _target, bool b) external onlyAdmin {
+        IOrderBook(_target).setIsSelfExecutionActive(b);
+    }
     function setIsProcessingPaused(address _target, bool b) external onlyAdmin {
         IOrderBook(_target).setIsProcessingPaused(b);
     }
@@ -212,12 +215,12 @@ contract Timelock is ITimelock {
     }
 
     function signalSetAsset(address _target, address asset, IStore.Asset memory assetInfo) external onlyAdmin {
-        bytes32 action = keccak256(abi.encodePacked("setAsset", _target, asset, assetInfo.decimals, assetInfo.minSize, assetInfo.referencePriceFeed));
+        bytes32 action = keccak256(abi.encodePacked("setAsset", _target, asset, assetInfo.decimals, assetInfo.minSize, assetInfo.priceFeedId));
         _setPendingAction(action);
         emit SignalSetAsset(_target, asset, assetInfo);
     }
     function setAsset(address _target, address asset, IStore.Asset memory assetInfo) external onlyAdmin {
-        bytes32 action = keccak256(abi.encodePacked("setAsset", _target, asset, assetInfo.decimals, assetInfo.minSize, assetInfo.referencePriceFeed));
+        bytes32 action = keccak256(abi.encodePacked("setAsset", _target, asset, assetInfo.decimals, assetInfo.minSize, assetInfo.priceFeedId));
         _validateAction(action);
         _clearAction(action);
         IStore(_target).setAsset(asset, assetInfo);
@@ -227,18 +230,17 @@ contract Timelock is ITimelock {
         bytes memory marketEncode = abi.encodePacked(
             marketInfo.name, // Market's full name, e.g. Bitcoin / U.S. Dollar
             marketInfo.category, // crypto, fx, commodities, or indices
-            marketInfo.referencePriceFeed, // Price feed contract address
+            marketInfo.hasReferencePrice, // has reference price ?
             marketInfo.maxLeverage, // No decimals
             marketInfo.maxDeviation, // In bps, max price difference from oracle to referencePrice
             marketInfo.fee, // In bps. 10 = 0.1%
             marketInfo.liqThreshold, // In bps
             marketInfo.fundingFactor, // Yearly funding rate if OI is completely skewed to one side. In bps.
             marketInfo.minOrderAge, // Min order age before is can be executed. In seconds
-            marketInfo.pythMaxAge, // Max Pyth submitted price age, in seconds
-            marketInfo.pythFeed, // Pyth price feed id
+            marketInfo.priceMaxAge, // Max  price age, in seconds
+            marketInfo.priceFeedId, // price feed id
             marketInfo.isReduceOnly, // accepts only reduce only orders
-            marketInfo.priceConfidenceThresholds,
-            marketInfo.priceConfidenceMultipliers
+            marketInfo.priceSpread  // market's price spread
         );
         bytes32 action = keccak256(abi.encodePacked("setMarket", _target, market,marketEncode));
         _setPendingAction(action);
@@ -249,18 +251,17 @@ contract Timelock is ITimelock {
         bytes memory marketEncode = abi.encodePacked(
             marketInfo.name, // Market's full name, e.g. Bitcoin / U.S. Dollar
             marketInfo.category, // crypto, fx, commodities, or indices
-            marketInfo.referencePriceFeed, // Price feed contract address
+            marketInfo.hasReferencePrice, //  has reference price ?
             marketInfo.maxLeverage, // No decimals
             marketInfo.maxDeviation, // In bps, max price difference from oracle to referencePrice
             marketInfo.fee, // In bps. 10 = 0.1%
             marketInfo.liqThreshold, // In bps
             marketInfo.fundingFactor, // Yearly funding rate if OI is completely skewed to one side. In bps.
             marketInfo.minOrderAge, // Min order age before is can be executed. In seconds
-            marketInfo.pythMaxAge, // Max Pyth submitted price age, in seconds
-            marketInfo.pythFeed, // Pyth price feed id
+            marketInfo.priceMaxAge, // Max price age, in seconds
+            marketInfo.priceFeedId, // price feed id
             marketInfo.isReduceOnly, // accepts only reduce only orders
-            marketInfo.priceConfidenceThresholds,
-            marketInfo.priceConfidenceMultipliers
+            marketInfo.priceSpread // market's price spread
         );
         bytes32 action = keccak256(abi.encodePacked("setMarket", _target, market,marketEncode));
         _validateAction(action);
@@ -273,10 +274,9 @@ contract Timelock is ITimelock {
         storedMarketInfo.maxLeverage = _marketInfo.maxLeverage;        
         storedMarketInfo.maxDeviation = _marketInfo.maxDeviation;        
         storedMarketInfo.minOrderAge = _marketInfo.minOrderAge;
-        storedMarketInfo.pythMaxAge = _marketInfo.pythMaxAge;
+        storedMarketInfo.priceMaxAge = _marketInfo.priceMaxAge;
         storedMarketInfo.isReduceOnly = _marketInfo.isReduceOnly;
-        storedMarketInfo.priceConfidenceThresholds = _marketInfo.priceConfidenceThresholds;
-        storedMarketInfo.priceConfidenceMultipliers = _marketInfo.priceConfidenceMultipliers;
+        storedMarketInfo.priceSpread = _marketInfo.priceSpread;
 
         IStore(_target).setMarket(_market, storedMarketInfo);
     }

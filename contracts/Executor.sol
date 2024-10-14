@@ -5,7 +5,6 @@ import '@openzeppelin/contracts/utils/Address.sol';
 import '@openzeppelin/contracts/security/ReentrancyGuard.sol';
 import '@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol';
 import '@openzeppelin/contracts/utils/math/SafeCast.sol';
-import '@pythnetwork/pyth-sdk-solidity/PythStructs.sol';
 
 import './utils/AddressStorage.sol';
 
@@ -13,7 +12,7 @@ import './FundingTracker.sol';
 import './OrderBook.sol';
 import './Store.sol';
 import './PositionManager.sol';
-import './utils/Pyth.sol';
+import './utils/FTSOv2.sol';
 
 import './utils/interfaces/IReferencePriceFeed.sol';
 import './utils/Governable.sol';
@@ -66,7 +65,7 @@ contract Executor is Governable, ReentrancyGuard {
     event WhitelistedKeeperUpdated(address indexed keeper, bool isActive);
     event LiquidationFeeUpdated(uint256 liquidationFee);
     event ReferencePriceMandatoryUpdated(bool mandatory);
-    event Link(address fundingTracker, address store, address orderBook, address positionManager, address referencePriceFeed, address pyth);
+    event Link(address fundingTracker, address store, address orderBook, address positionManager, address referencePriceFeed, address ftsoV2);
 
     // Contracts
     AddressStorage public immutable addressStorage;
@@ -75,7 +74,7 @@ contract Executor is Governable, ReentrancyGuard {
     Store public store;
     PositionManager public positionManager;
     IReferencePriceFeed public referencePriceFeed;
-    Pyth public pyth;
+    FTSOv2 public ftsoV2;
 
     /// @dev Reverts if order processing is paused
     modifier ifNotPaused() {
@@ -122,33 +121,33 @@ contract Executor is Governable, ReentrancyGuard {
         orderBook = OrderBook(addressStorage.getAddress('OrderBook'));
         positionManager = PositionManager(addressStorage.getAddress('PositionManager'));
         referencePriceFeed = IReferencePriceFeed(addressStorage.getAddress('ReferencePriceFeed'));
-        pyth = Pyth(addressStorage.getAddress('Pyth'));
+        ftsoV2 = FTSOv2(addressStorage.getAddress('FTSOv2'));
         emit Link(
             address(fundingTracker),
             address(store),
             address(orderBook),
             address(positionManager),
             address(referencePriceFeed),
-            address(pyth)
+            address(ftsoV2)
         );
     }
 
     // ORDER EXECUTION
 
-    /// @notice Trailing Stop Order execution by keeper with Pyth priceUpdateData
+    /// @notice Trailing Stop Order execution by keeper 
     /// @dev Only callable by whitelistedKeepers
     /// @param _orderIds order id's to execute
-    /// @param _priceUpdateData Pyth priceUpdateData, see docs.pyth.network
+    /// @param _priceFeedIds different priceFeedIds in orders. e.g if orders's market are BTC,BTC,ETH, pricefeeds should be BTC,ETH for paying lower fee
     /// @param _trailingStopRefPrices Reference Price used to execute for verification
     /// @param _trailingStopRefPriceTimestamps Reference Price timestamp used to execute for verification
     function executeTrailingStopOrders(
         uint32[] calldata _orderIds,
-        bytes[] calldata _priceUpdateData,
+        bytes21[] calldata _priceFeedIds,
         uint96[] calldata _trailingStopRefPrices,
         uint256[] calldata _trailingStopRefPriceTimestamps
     ) external payable nonReentrant ifNotPaused {
         require(whitelistedKeepers[msg.sender], "!unauthorized");
-        uint256 remainingMsgValue = pyth.updatePriceFeeds{value: msg.value}(_priceUpdateData);
+        (uint256[] memory prices, uint64 publishTime, uint256 remainingMsgValue) = ftsoV2.getPrices{value: msg.value}(_priceFeedIds);
 
         for (uint256 i; i < _orderIds.length; i++) {
             uint32 orderId = _orderIds[i];
@@ -171,9 +170,9 @@ contract Executor is Governable, ReentrancyGuard {
                 continue;
             }
 
-            (uint256 price, uint256 publishTime) = _getPythPrice(market,order.isLong);
+            uint256 price = _getMarketPrice(prices, _priceFeedIds, market.priceFeedId, market.priceSpread,order.isLong);
 
-            if (block.timestamp - publishTime > market.pythMaxAge) {
+            if (block.timestamp - publishTime > market.priceMaxAge) {
                 // Price too old
                 emit OrderSkipped(orderId, order.market, price, publishTime, '!stale');
                 continue;
@@ -192,17 +191,20 @@ contract Executor is Governable, ReentrancyGuard {
         }
     }
 
-
-    /// @notice Order execution by keeper with Pyth priceUpdateData
+    /// @notice Order execution by keeper or orderbook contract for self execution
     /// @dev Only callable by whitelistedKeepers
     /// @param _orderIds order id's to execute
-    /// @param _priceUpdateData Pyth priceUpdateData, see docs.pyth.network
+    /// @param _priceFeedIds different priceFeedIds in orders. e.g if orders's market are BTC,BTC,ETH, pricefeeds should be BTC,ETH for paying lower fee
+    /// @param _keeper keeper or user address
     function executeOrders(
         uint32[] calldata _orderIds,
-        bytes[] calldata _priceUpdateData
-    ) external payable nonReentrant ifNotPaused {
-        require(whitelistedKeepers[msg.sender], "!unauthorized");
-        uint256 remainingMsgValue = pyth.updatePriceFeeds{value: msg.value}(_priceUpdateData);
+        bytes21[] calldata _priceFeedIds,
+        address _keeper
+    ) external payable nonReentrant ifNotPaused returns (uint256){
+        require(whitelistedKeepers[msg.sender] || msg.sender == address(orderBook), "!unauthorized");
+        address keeper = msg.sender == address(orderBook) ? _keeper : msg.sender ;
+        (uint256[] memory prices, uint64 publishTime, uint256 remainingMsgValue) = ftsoV2.getPrices{value: msg.value}(_priceFeedIds);
+
 
         // Get the price for each order
         for (uint256 i; i < _orderIds.length; i++) {
@@ -215,27 +217,33 @@ contract Executor is Governable, ReentrancyGuard {
                 continue;
             }
 
-            (uint256 price, uint256 publishTime) = _getPythPrice(market,order.isLong);
+            uint256 price = _getMarketPrice(prices, _priceFeedIds, market.priceFeedId, market.priceSpread,order.isLong);
 
-            if (block.timestamp - publishTime > market.pythMaxAge) {
+            if (block.timestamp - publishTime > market.priceMaxAge) {
                 // Price too old
                 emit OrderSkipped(_orderIds[i], order.market, price, publishTime, '!stale');
                 continue;
             }
 
-            (bool status, string memory reason) = _executeOrder(_orderIds[i], price,0, msg.sender);
-            if (!status) orderBook.cancelOrder(_orderIds[i], reason, msg.sender);
+            (bool status, string memory reason) = _executeOrder(_orderIds[i], price,0, keeper);
+            if (!status){
+                if(msg.sender == address(orderBook)){  // if user self execution then revert
+                    revert(reason);
+                }
+                orderBook.cancelOrder(_orderIds[i], reason, keeper);
+            }    
         }
 
         // Refund msg.value excess, if any
         if (remainingMsgValue > 0) {
             payable(msg.sender).sendValue(remainingMsgValue);
         }
+        return remainingMsgValue;
     }
 
     /// @dev Executes submitted order
     /// @param _orderId Order to execute
-    /// @param _price Pyth price 
+    /// @param _price market price 
     /// @param _trailingStopRefPrice Reference Price used to execute trailing stop orders for verification
     /// @param _keeper Address of keeper which executes the order
     /// @return status if true, order is not canceled.
@@ -271,7 +279,7 @@ contract Executor is Governable, ReentrancyGuard {
 
         Store.Market memory market = store.getMarket(order.market);
 
-        uint256 referencePrice = referencePriceFeed.getPrice(market.referencePriceFeed);
+        uint256 referencePrice = market.hasReferencePrice ? referencePriceFeed.getPrice(market.priceFeedId) : 0 ;
 
         // Bound provided price with referencePrice
         if (!_boundPriceWithReferencePrice(market.maxDeviation, referencePrice, _price)) {
@@ -337,26 +345,29 @@ contract Executor is Governable, ReentrancyGuard {
         return (true, '');
     }
 
-    /// @notice Position liquidation by keeper with Pyth priceUpdateData
+    /// @notice Position liquidation by keeper 
     /// @dev Only callable by whitelistedKeepers
     /// @param _users User addresses to liquidate
     /// @param _assets Base asset array
     /// @param _markets Market array
-    /// @param _priceUpdateData Pyth priceUpdateData, see docs.pyth.network
+    /// @param _priceFeedIds different priceFeedIds in orders. e.g if orders's market are BTC,BTC,ETH, pricefeeds should be BTC,ETH for paying lower fee
     function liquidatePositions(
         address[] calldata _users,
         address[] calldata _assets,
         bytes10[] calldata _markets,
-        bytes[] calldata _priceUpdateData
+        bytes21[] calldata _priceFeedIds
     ) external payable nonReentrant ifNotPaused {
         require(whitelistedKeepers[msg.sender], "!unauthorized");
-        uint256 remainingMsgValue = pyth.updatePriceFeeds{value: msg.value}(_priceUpdateData);
+        (uint256[] memory prices, uint64 publishTime, uint256 remainingMsgValue) = ftsoV2.getPrices{value: msg.value}(_priceFeedIds);
 
         for (uint256 i; i < _users.length; i++) {
             (bool status, string memory reason, uint256 price) = _liquidatePosition(
                 _users[i],
                 _assets[i],
                 _markets[i],
+                prices,
+                _priceFeedIds,
+                publishTime,
                 msg.sender
             );
             if (!status) {
@@ -374,11 +385,17 @@ contract Executor is Governable, ReentrancyGuard {
     /// @param _user User address to liquidate
     /// @param _asset Base asset of position
     /// @param _market Market this position was submitted on
+    /// @param _prices prices from FTSOv2
+    /// @param _priceFeedIds priceFeedIds
+    /// @param _publishTime prices's publishTime
     /// @param _keeper Address of keeper which liquidates position 
     function _liquidatePosition(
         address _user,
         address _asset,
         bytes10 _market,
+        uint256[] memory _prices,
+        bytes21[] memory _priceFeedIds,
+        uint64 _publishTime,
         address _keeper
     ) internal returns (bool, string memory,uint256) {
         PositionManager.Position memory position = positionManager.getPosition(_user, _asset, _market);
@@ -387,9 +404,9 @@ contract Executor is Governable, ReentrancyGuard {
         }
         Store.Market memory marketInfo = store.getMarket(_market);
 
-        (uint256 price, uint256 publishTime) = _getPythPrice(marketInfo,!position.isLong);
+        uint256 price = _getMarketPrice(_prices, _priceFeedIds, marketInfo.priceFeedId, marketInfo.priceSpread,!position.isLong);
 
-        if (block.timestamp - publishTime > marketInfo.pythMaxAge) {
+        if (block.timestamp - _publishTime > marketInfo.priceMaxAge) {
             return (false, '!stale',price);  //old price 
         }
 
@@ -397,7 +414,7 @@ contract Executor is Governable, ReentrancyGuard {
             return (false, '!no-price',price);
         }
 
-        uint256 referencePrice = referencePriceFeed.getPrice(marketInfo.referencePriceFeed);
+        uint256 referencePrice = marketInfo.hasReferencePrice ? referencePriceFeed.getPrice(marketInfo.priceFeedId) : 0 ;
 
         // Bound provided price with referencePrice
         if (!_boundPriceWithReferencePrice(marketInfo.maxDeviation, referencePrice, price)) {
@@ -455,37 +472,35 @@ contract Executor is Governable, ReentrancyGuard {
 
     // -- Utils -- //
 
-    /// @dev Returns pyth price converted to 18 decimals according to market pyth price info
-    /// @param _market Market info
+    /// @dev Returns market price converted to 18 decimals according to market ftsov2 fast update price info
+    /// @param _prices prices from FTSOv2
+    /// @param _priceFeedIds priceFeedIds   
+    /// @param _marketFeedId market's priceFeedId    
+    /// @param _priceSpread market's price spread
     /// @param _maximise isMaxPrice?
     /// @return price - Price with 18 decimals
-    /// @return publishTime - Pyth Price publish time
-    function _getPythPrice(Store.Market memory _market, bool _maximise) private view returns(uint256, uint256) {
-
+    function _getMarketPrice(
+        uint256[] memory _prices, 
+        bytes21[] memory _priceFeedIds, 
+        bytes21 _marketFeedId, 
+        uint16 _priceSpread, 
+        bool _maximise
+    ) private pure returns(uint256) {
         uint256 price;
-
-        PythStructs.Price memory pythPrice = pyth.getPriceUnsafe(_market.pythFeed);
-
-        if (pythPrice.price >= 0 && pythPrice.expo <= 0){
-            uint256 baseConversion = 10 ** uint256(int256(18) + pythPrice.expo);
-            price =  uint256(pythPrice.price * int256(baseConversion));       
-                        
-            if (_market.priceConfidenceMultipliers > 0){
-                uint256 conf = pythPrice.conf * baseConversion;
-                if((conf * BPS_DIVIDER) / price > _market.priceConfidenceThresholds){
-                    uint256 confDiff = (conf * _market.priceConfidenceMultipliers) / BPS_DIVIDER;  
-                    if(confDiff > 0){
-                        if (_maximise) {                
-                            price = price + confDiff;
-                        }else{
-                            price = price - confDiff;
-                        }    
-                    }      
-                }   
-            }            
-            
+        for (uint256 i = 0; i < _priceFeedIds.length; i++) {
+            if(_priceFeedIds[i] == _marketFeedId ){
+                price = _prices[i];
+                break;
+            }
         }
-        return (price, pythPrice.publishTime);
+
+        uint256 spread = price * _priceSpread / BPS_DIVIDER;
+        if (_maximise) {                
+            price = price + spread;
+        }else{
+            price = price - spread;
+        }   
+        return price;
     }
 
 
@@ -494,12 +509,16 @@ contract Executor is Governable, ReentrancyGuard {
     /// @return USD amount with 18 decimals
     function _getUsdAmount(address _asset, uint256 _amount) internal view returns (uint256) {
         Store.Asset memory assetInfo = store.getAsset(_asset);
-        uint256 referencePrice = referencePriceFeed.getPrice(assetInfo.referencePriceFeed);
-        // _amount is in the asset's decimals, convert to 18. Price is 18 decimals
-        return (_amount * referencePrice) / 10 ** assetInfo.decimals;
+
+        try referencePriceFeed.getPrice(assetInfo.priceFeedId) returns(uint256 referencePrice) {
+            // _amount is in the asset's decimals, convert to 18. Price is 18 decimals
+            return (_amount * referencePrice) / 10 ** assetInfo.decimals;
+        } catch { // if price is not valid, dont revert tx.
+            return 0;
+        }
     }
 
-    /// @dev Submitted Pyth price is bound by the referencePrice 
+    /// @dev Fast Update price is bound by the referencePrice 
     /// @return A boolean value indicating whether the price is bounded.
     function _boundPriceWithReferencePrice(
         uint256 _maxDeviation,

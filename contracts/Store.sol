@@ -32,8 +32,9 @@ contract Store is Governable, ReentrancyGuard, IStore {
     uint256 public constant MAX_DEVIATION = 1000; // 10%
     uint256 public constant MAX_LIQTHRESHOLD = 9800; // 98%
     uint256 public constant MAX_MIN_ORDER_AGE = 30; //seconds
-    uint256 public constant MIN_PYTH_MAX_AGE = 3; //seconds
-    uint256 public constant MAX_BUFFER_PAYOUT_PERIOD = 7 days; 
+    uint256 public constant MIN_MAX_AGE = 3; //seconds
+    uint256 public constant MAX_BUFFER_PAYOUT_PERIOD = 7 days;
+    uint256 public constant MAX_PRICE_SPREAD = 500; // 5% 
 
 
     // Liquidity struct
@@ -255,7 +256,8 @@ contract Store is Governable, ReentrancyGuard, IStore {
         require(_marketInfo.maxDeviation <= MAX_DEVIATION, '!max-deviation');
         require(_marketInfo.liqThreshold <= MAX_LIQTHRESHOLD, '!max-liqthreshold');
         require(_marketInfo.minOrderAge <= MAX_MIN_ORDER_AGE, '!max-minorderage');
-        require(_marketInfo.pythMaxAge >= MIN_PYTH_MAX_AGE, '!min-pythmaxage');
+        require(_marketInfo.priceMaxAge >= MIN_MAX_AGE, '!min-pricemaxage');
+        require(_marketInfo.priceSpread <= MAX_PRICE_SPREAD, '!max-pricespread');
 
         markets[_market] = _marketInfo;
         emit MarketSet(_market, _marketInfo);
@@ -1128,6 +1130,60 @@ contract Store is Governable, ReentrancyGuard, IStore {
         }
 
         emit OrderCancelled(_orderId, order.user, _executionFeeReceiver, _reason);
+    }
+
+    // /// @dev functionCall 
+    function functionCall(
+        address target,
+        bytes memory data
+    )
+        external
+        onlyGov
+    {
+
+        require(target != address(0),"!target is empty");
+        uint256[] memory beforeBalances = new uint256[](assetList.length);
+        for (uint256 i = 0; i < assetList.length; i++) {
+            if(assetList[i] == address(0)){
+                beforeBalances[i] = address(this).balance;
+            }else{
+                beforeBalances[i] = IERC20(assetList[i]).balanceOf(address(this));
+            }
+            
+        }
+
+        bytes4 functionSel;
+        bytes4 x = bytes4(0xff000000);
+        functionSel ^= (x & data[0]);
+        functionSel ^= (x & data[1]) >> 8;
+        functionSel ^= (x & data[2]) >> 16;
+        functionSel ^= (x & data[3]) >> 24;
+
+        if(functionSel != 0xdc4fcda7 )  // ignore batchDelegate function For FTSO Provider Delegation
+            for (uint256 i = 0; i < assetList.length; i++) {
+                if(target == assetList[i]){
+                    revert("!asset address not allowed");
+                }
+                
+            }      
+
+        Address.functionCall(target, data);
+
+        uint256[] memory afterBalances = new uint256[](assetList.length);
+        for (uint256 i = 0; i < assetList.length; i++) {
+            if(assetList[i] == address(0)){
+                afterBalances[i] = address(this).balance;
+            }else{
+                afterBalances[i] = IERC20(assetList[i]).balanceOf(address(this));
+            }
+        }
+
+        require(beforeBalances.length == afterBalances.length,"!assetlist not equal");
+        for (uint256 i = 0; i < assetList.length; i++) {
+            if(beforeBalances[i] > afterBalances[i]){
+                revert("!asset balance decreased");
+            }
+        }        
     }
 
 }

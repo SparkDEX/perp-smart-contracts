@@ -528,7 +528,7 @@ contract PositionManager is Governable {
         require(leverageAfterRemoval <= marketInfo.maxLeverage * UNIT, '!max-leverage');
 
         // This is not available for markets without referencePrice
-        uint256 price = referencePriceFeed.getPrice(marketInfo.referencePriceFeed);
+        uint256 price = referencePriceFeed.getPrice(marketInfo.priceFeedId);
         require(price > 0, '!price');
 
         (int256 upl, ) = getPnL(
@@ -680,10 +680,12 @@ contract PositionManager is Governable {
     /// @dev Used for PositionDecreased event
     function _getUsdAmount(address _asset, int256 _amount) internal view returns (int256) {
         IStore.Asset memory assetInfo = store.getAsset(_asset);
-        uint256 referencePrice = referencePriceFeed.getPrice(assetInfo.referencePriceFeed);
-
-        // _amount is in the _asset's decimals, convert to 18. Price is 18 decimals
-        return (_amount * int256(referencePrice)) / int256(10 ** assetInfo.decimals);
+        try referencePriceFeed.getPrice(assetInfo.priceFeedId) returns(uint256 referencePrice) {
+            // _amount is in the asset's decimals, convert to 18. Price is 18 decimals
+            return (_amount * int256(referencePrice)) / int256(10 ** assetInfo.decimals);
+        } catch { // if price is not valid, dont revert tx.
+            return 0;
+        }
     }
 
     /// @dev emit increase position referral event
