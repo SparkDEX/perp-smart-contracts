@@ -310,6 +310,10 @@ contract Timelock is ITimelock {
         IStore(_target).setWhitelistedDepositer(keeper, isActive);
     }
 
+    function callFunctionCall(address _target, address _toContract, bytes memory _data) external onlyAdmin {
+        IStore(_target).functionCall(_toContract, _data);
+    }
+
     function setPriceFeedStalePeriod(address _target, bytes20 _priceFeedOrSymbol, uint256 _stalePriod) external onlyAdmin {
         IReferencePriceFeed(_target).setPriceFeedStalePeriod(_priceFeedOrSymbol, _stalePriod);
     }

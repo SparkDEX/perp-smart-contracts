@@ -322,7 +322,7 @@ contract OrderBook is Governable {
         _params.orderDetail.executionFee = orderExecutionFee;
 
         uint256 totalExecutionFee = _params.orderDetail.executionFee;
-
+        uint8 mainOrderType = _params.orderDetail.orderType;
         // Submit order
         uint256 valueConsumed;
         uint32 orderId;
@@ -401,7 +401,7 @@ contract OrderBook is Governable {
         uint256 priceFeedFee;
         if(isSelfExecutionActive){
             IStore.Market memory market = store.getMarket(_params.market);
-            if(market.minOrderAge == 0 && _params.orderDetail.orderType == 0){
+            if(market.minOrderAge == 0 && mainOrderType == 0){
                 priceFeedFee = ftsoV2.getFee(market.priceFeedId);
                 uint32[] memory orderIds = new uint32[](1);
                 bytes21[] memory priceFeedIds = new bytes21[](1);

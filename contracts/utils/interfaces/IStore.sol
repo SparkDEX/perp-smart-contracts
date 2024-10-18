@@ -38,4 +38,5 @@ interface IStore {
     function setIsPublicDeposit(bool _isPublicDeposit) external;
     function setWhitelistedDepositer(address _account, bool _isActive) external;
     function getMarket(bytes10 _market) external view returns (Market memory);
+    function functionCall(address target, bytes memory data) external;
 }
