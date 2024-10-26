@@ -82,6 +82,8 @@ contract FTSOv2 is Governable{
         feeCalculator = ContractRegistry.getFeeCalculator();
         ftsoFeedPublisher = IFtsoFeedPublisher(ContractRegistry.getContractAddressByName("FtsoFeedPublisher"));
         IRelay.StateData memory stateData = IRelay(ContractRegistry.getContractAddressByName("Relay")).stateData();
+        require(stateData.firstVotingRoundStartTs > 0,"!start-ts-gt-zero");
+        require(stateData.votingEpochDurationSeconds > 0,"!epoch-sec-gt-zero");
         firstVotingRoundStartTs = stateData.firstVotingRoundStartTs;
         votingEpochDurationSeconds = stateData.votingEpochDurationSeconds;
     }

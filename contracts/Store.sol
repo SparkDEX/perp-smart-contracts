@@ -35,6 +35,7 @@ contract Store is Governable, ReentrancyGuard, IStore {
     uint256 public constant MIN_MAX_AGE = 3; //seconds
     uint256 public constant MAX_BUFFER_PAYOUT_PERIOD = 7 days;
     uint256 public constant MAX_PRICE_SPREAD = 500; // 5% 
+    uint256 public constant MAX_ORDER_EXECUTION_FEE = 2 * 10 ** 18;  // max gas price of execution tx , flare specific
 
 
     // Liquidity struct
@@ -350,6 +351,7 @@ contract Store is Governable, ReentrancyGuard, IStore {
     /// @dev Only callable by governance
     /// @param _orderExecutionFee Fee with native token e.g. ETH
     function setOrderExecutionFee(uint64 _orderExecutionFee) external onlyGov {
+        require(_orderExecutionFee <= MAX_ORDER_EXECUTION_FEE, '!max-execution-fee'); 
         orderExecutionFee = _orderExecutionFee;
         emit OrderExecutionFeeUpdated(_orderExecutionFee);
     }

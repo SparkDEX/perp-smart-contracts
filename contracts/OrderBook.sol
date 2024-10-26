@@ -32,6 +32,7 @@ contract OrderBook is Governable {
     uint256 public constant UNIT = 10 ** 18;
     uint256 public constant BPS_DIVIDER = 10000;
     uint256 public constant MAX_TRAILING_STOP_PERCENTAGE = 2000;
+    uint256 public constant MAX_ORDER_EXECUTION_FEE = 2 * 10 ** 18;  // max gas price of execution tx , flare specific
 
     // Order struct
 
@@ -211,6 +212,7 @@ contract OrderBook is Governable {
     /// @dev Only callable by governance
     /// @param _orderExecutionFee Fee with native token e.g. ETH
     function setOrderExecutionFee(uint64 _orderExecutionFee) external onlyGov {
+        require(_orderExecutionFee <= MAX_ORDER_EXECUTION_FEE, '!max-execution-fee'); 
         orderExecutionFee = _orderExecutionFee;
         emit OrderExecutionFeeUpdated(_orderExecutionFee);
     }

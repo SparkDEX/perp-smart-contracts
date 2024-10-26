@@ -21,6 +21,7 @@ contract ProxyAdmin is AccessControl {
     event WithdrawToken(address indexed sender, address receiver, address token, uint256 amount);
 
     constructor(address admin) {
+        require(admin != address(0),"!zero-address");
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(ADMIN_ROLE, admin);
     }

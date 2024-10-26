@@ -26,12 +26,12 @@ contract ReferralStorage is Governable, IReferralStorage {
     mapping (address => bytes32) public override traderReferralCodes;
 
 
-    event SetTraderReferralCode(address account, bytes32 code);
-    event SetTier(uint256 tierId, uint256 totalRebate, uint256 discountShare);
-    event SetReferrerTier(address referrer, uint256 tierId);
-    event SetReferrerDiscountShare(address referrer, uint256 discountShare);
-    event RegisterCode(address account, bytes32 code);
-    event SetCodeOwner(address account, address newAccount, bytes32 code);
+    event SetTraderReferralCode(address indexed account, bytes32 code);
+    event SetTier(uint256 indexed tierId, uint256 totalRebate, uint256 discountShare);
+    event SetReferrerTier(address indexed referrer, uint256 tierId);
+    event SetReferrerDiscountShare(address indexed referrer, uint256 discountShare);
+    event RegisterCode(address indexed account, bytes32 code);
+    event SetCodeOwner(address indexed account, address newAccount, bytes32 code);
     event GovSetCodeOwner(bytes32 code, address newAccount);
     event Link(address orderBook);
 
